@@ -15,4 +15,7 @@ source vision/bin/activate
 pip install --upgrade pip
 pip install jupyterlab 
 pip install scikit-learn pandas numpy matplotlib 
+pip install -U transformers
+pip install ultralytics opencv-python  
+
 ```

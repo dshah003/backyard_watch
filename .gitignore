@@ -136,6 +136,9 @@ ENV/
 env.bak/
 venv.bak/
 vision/
+*.pt
+bird_detection_logs/
+
 
 # Spyder project settings
 .spyderproject

@@ -5,6 +5,7 @@ import os
 import sys
 import yaml # Import the YAML library
 import ffmpeg
+import logging
 import multiprocessing
 from pathlib import Path
 from functools import partial
@@ -13,11 +14,15 @@ SCRIPT_PATH = Path(__file__).resolve()
 UTILS_DIR = SCRIPT_PATH.parent
 PROJECT_ROOT = UTILS_DIR.parent
 
+logging.basicConfig(level=logging.DEBUG, 
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[logging.StreamHandler(sys.stdout)])
+
 def load_config():
     """Loads settings from the config.yaml file."""
     config_path = PROJECT_ROOT/"config"/"config.yaml"
     if not config_path.exists():
-        print(f"Error: Configuration file not found at '{config_path}'")
+        logging.error(f"Configuration file not found at '{config_path}'")
         sys.exit(1)
     
     with open(config_path, "r") as f:
@@ -25,7 +30,7 @@ def load_config():
             config = yaml.safe_load(f)
             return config
         except yaml.YAMLError as e:
-            print(f"Error parsing YAML file: {e}")
+            logging.error(f"Error parsing YAML file: {e}")
             sys.exit(1)
 
 def convert_video_to_frames(video_path, config):
@@ -37,7 +42,7 @@ def convert_video_to_frames(video_path, config):
         video_path (Path): The full path to the video file.
         config (dict): The loaded configuration dictionary.
     """
-    print(f"[{os.getpid()}] Processing video: {video_path.name}")
+    logging.info(f"[{os.getpid()}] Processing video: {video_path.name}")
     
     # Get settings from the config dictionary
     frame_output_folder = config['paths']['frame_output']
@@ -52,7 +57,7 @@ def convert_video_to_frames(video_path, config):
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Define the output file pattern
-    output_pattern = str(output_dir / f"f_%06d_{video_name}.{image_format}")
+    output_pattern = str(output_dir / f"f_{video_name}_%06d.{image_format}")
     
     # Set output options
     output_options = {
@@ -72,12 +77,39 @@ def convert_video_to_frames(video_path, config):
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)
         )
-        print(f"[{os.getpid()}] ✅ Finished: {video_path.name}")
+        logging.info(f"[{os.getpid()}] ✅ Finished: {video_path.name}")
         return True, video_path.name, None
     except ffmpeg.Error as e:
-        error_message = f"[{os.getpid()}] ❌ Error processing {video_path.name}:\n{e.stderr.decode()}"
+        error_message = f"[{os.getpid()}] Error processing {video_path.name} Retrying with CPU decoder.:\n{e.stderr.decode()}"
         print(error_message, file=sys.stderr)
-        return False, video_path.name, error_message
+        try:
+            (
+                ffmpeg
+                .input(str(video_path))
+                .output(output_pattern, **output_options)
+                .overwrite_output()
+                .run(capture_stdout=True, capture_stderr=True)
+            )
+            logging.info(f"[{os.getpid()}] ✅ Finished: {video_path.name}")
+            return True, video_path.name, None
+        except ffmpeg.Error as e:
+            error_message = f"[{os.getpid()}] Error processing {video_path.name} Retrying with Tonemap:\n{e.stderr.decode()}"
+            try:
+                (
+                    ffmpeg
+                    .input(str(video_path))
+                    .filter('tonemap', tonemap='hable')
+                    .output(output_pattern, **output_options)
+                    .overwrite_output()
+                    .run(capture_stdout=True, capture_stderr=True)
+                )
+                logging.info(f"[{os.getpid()}] ✅ Finished: {video_path.name}")
+                return True, video_path.name, None
+            except ffmpeg.Error as e:
+                error_message = f"[{os.getpid()}] ❌ Error processing {video_path.name}:\n{e.stderr.decode()}"
+                print(error_message, file=sys.stderr)
+                return False, video_path.name, error_message
+
 
 
 def main():
@@ -96,22 +128,22 @@ def main():
     output_path = Path(output_folder).resolve()
 
     if not source_path.is_dir():
-        print(f"Error: Source folder not found at '{source_path}'")
+        logging.error(f"Error: Source folder not found at '{source_path}'")
         sys.exit(1)
 
     output_path.mkdir(exist_ok=True)
-    print(f"Configuration loaded from config.yaml")
-    print(f"Project Root: {PROJECT_ROOT}")
-    print(f"Source folder: {source_path}")
-    print(f"Output folder: {output_path}")
+    logging.info(f"Configuration loaded from config.yaml")
+    logging.info(f"Project Root: {PROJECT_ROOT}")
+    logging.info(f"Source folder: {source_path}")
+    logging.info(f"Output folder: {output_path}")
 
     # Find all .mp4 files
     video_files = list(source_path.glob("*.mp4"))
     if not video_files:
-        print(f"No .mp4 files found in '{source_path}'.")
+        logging.error(f"No .mp4 files found in '{source_path}'.")
         return
 
-    print(f"Found {len(video_files)} videos to process.")
+    logging.info(f"Found {len(video_files)} videos to process.")
 
     # Determine the number of processes
     if isinstance(worker_processes_config, int):
@@ -119,7 +151,7 @@ def main():
     else: # Default to 'auto'
         num_processes = os.cpu_count()
     
-    print(f"Starting conversion with {num_processes} parallel processes...")
+    logging.info(f"Starting conversion with {num_processes} parallel processes...")
 
     # Create a partial function with the 'config' argument already filled in
     worker_func = partial(convert_video_to_frames, config=config)
@@ -139,15 +171,15 @@ def main():
             else:
                 failed_files.append(video_name)
         
-        print("\n--- All tasks complete ---")
-        print(f"Successfully converted: {len(success_files)}")
-        print(f"Failed conversions:   {len(failed_files)}")
+        logging.info("\n--- All tasks complete ---")
+        logging.info(f"Successfully converted: {len(success_files)}")
+        logging.info(f"Failed conversions:   {len(failed_files)}")
 
          # If there were failures, print the list of failed files
         if failed_files:
-            print("\nThe following files failed to process (likely corrupted):")
+            logging.error("\nThe following files failed to process (likely corrupted):")
             for filename in failed_files:
-                print(f"  - {filename}")
+                logging.error(f"  - {filename}")
 
 if __name__ == "__main__":
     main()

@@ -27,4 +27,19 @@ pip install ffmpeg-python
 
 ## Usage
 
-```python3 frame_extractor.py```
+```python3 frame_extractor.py```\
+
+## Useful commands
+
+Sort files by name and used to shortlist images. (press 1 to move the file to false_negatives dir)
+```sh
+feh --scale-down -S filename --action1 'mv %F false_negatives/'
+feh --scale-down --action1 'echo^CF >> false_negatives.txt'
+```
+
+Delete files from folder A if they exist in folder B
+```sh 
+find folderB -maxdepth 1 -type f -name "*.jpg" -printf "%f\n" | xargs -I {} rm -v "folderA/{}"
+
+find sorted_frames/no_animal/ -maxdepth 1 -type f -name "*.jpg" -printf "%f\n" | xargs -I {} rm -v "extracted_frames/{}"
+```
